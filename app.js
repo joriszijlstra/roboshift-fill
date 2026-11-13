@@ -333,9 +333,9 @@ function viewMagazijn() {
 }
 
 function viewInstellingen() {
-  const secs = [["dranken", 'Dranken<span class="lg"> op scherm</span>'], ["koelingen", "Koelingen"], ["volgorde", "Pakvolgorde"], ["koppeling", 'unTill<span class="lg">-koppeling</span>'], ["algemeen", 'Weergave<span class="lg"> en team</span>']];
+  const secs = [["dranken", 'Dranken<span class="lg"> op scherm</span>'], ["koelingen", "Koelingen"], ["volgorde", "Pakvolgorde"], ["koppeling", 'unTill<span class="lg">-koppeling</span>'], ["uitsluiten", 'Niet meetellen'], ["algemeen", 'Weergave<span class="lg"> en team</span>']];
   if (!secs.some(s => s[0] === SET.sec)) SET.sec = "dranken";
-  const body = SET.sec === "dranken" ? setDranken() : SET.sec === "koelingen" ? setKoelingen() : SET.sec === "volgorde" ? setVolgorde() : SET.sec === "koppeling" ? viewKoppeling() : setAlgemeen();
+  const body = SET.sec === "dranken" ? setDranken() : SET.sec === "koelingen" ? setKoelingen() : SET.sec === "volgorde" ? setVolgorde() : SET.sec === "koppeling" ? viewKoppeling() : SET.sec === "uitsluiten" ? viewUitsluiten() : setAlgemeen();
   return `<nav class="subnav" aria-label="Instellingen">${secs.map(([v, l]) => `<button data-sec="${v}" aria-current="${SET.sec === v}">${l}</button>`).join("")}</nav><div class="setbody">${body}</div>`;
 }
 function setDranken() {
@@ -514,6 +514,42 @@ async function loadKoppeling() {
     sb.from("untill_articles").select("id, name, number, department, sold_qty, last_sold").order("sold_qty", { ascending: false }).limit(2000),
   ]);
   U.map = m.data || []; U.arts = Object.fromEntries((a.data || []).map(x => [x.id, x])); U.loaded = true;
+  await loadUitsluiten();
+}
+
+// Niet meetellen: een drank die op bepaalde tafels wordt aangeslagen telt niet mee in Fill
+// (bijv. cola op een personeelstafel, geschonken uit de grote fles). Geldt alleen voor nieuwe aanslagen.
+const X = { rows: [], loaded: false };
+async function loadUitsluiten() {
+  const { data } = await sb.from("fill_uitsluitingen").select("id, product_id, tafel_van, tafel_tot, actief, notitie").order("tafel_van").order("product_id");
+  X.rows = data || []; X.loaded = true;
+}
+function viewUitsluiten() {
+  if (!X.loaded) return `<p class="hint">Laden…</p>`;
+  const name = pid => S.products[pid]?.name || pid;
+  const rows = [...X.rows].sort((a, b) => a.tafel_van - b.tafel_van || a.tafel_tot - b.tafel_tot || name(a.product_id).localeCompare(name(b.product_id)));
+  const opts = `<option value="">Kies drank…</option>` + S.order.filter(shownAnywhere).map(pid => `<option value="${pid}">${esc(S.products[pid].name)}</option>`).join("");
+  let h = `<p class="hint">Aanslagen van deze dranken op deze tafels tellen niet mee in Fill: de koeling gaat er niet van omlaag. Handig voor personeelstafels waar fris uit een grote fles komt. Geldt voor nieuwe aanslagen, niet met terugwerkende kracht.</p>
+    <form class="card newdrink" id="ux-form"><h3>Regel toevoegen</h3><div class="nd-grid">
+      <label>Drank<select class="par" id="ux-pid" required>${opts}</select></label>
+      <label>Van tafel<input class="par num" type="number" id="ux-van" min="0" max="99999" step="1" required placeholder="400"></label>
+      <label>Tot en met tafel<input class="par num" type="number" id="ux-tot" min="0" max="99999" step="1" required placeholder="499"></label>
+      <label>Notitie<input class="search" id="ux-note" maxlength="80" placeholder="Bijv. personeel, grote fles"></label></div>
+      <div class="toolbar" style="margin:10px 0 0"><button class="btn primary">Toevoegen</button></div></form>
+    <h3 class="sechead">Regels <span class="num">${rows.length}</span></h3><div class="rows uxrows">`;
+  for (const r of rows) h += `<div class="row"><label class="r-name"><input type="checkbox" class="chk" data-uxactief="${r.id}" ${r.actief ? "checked" : ""} aria-label="Actief"> <span>${esc(name(r.product_id))}${r.notitie ? `<small>${esc(r.notitie)}</small>` : ""}</span></label>
+    <span class="ux-tafels">tafel <input class="par num" type="number" min="0" max="99999" step="1" data-uxvan="${r.id}" value="${r.tafel_van}" aria-label="Van tafel"> t/m <input class="par num" type="number" min="0" max="99999" step="1" data-uxtot="${r.id}" value="${r.tafel_tot}" aria-label="Tot en met tafel"></span>
+    <button class="btn sm" data-uxdel="${r.id}" aria-label="Verwijderen">✕</button></div>`;
+  if (!rows.length) h += `<div class="empty">Nog geen regels: alles telt mee.</div>`;
+  return h + `</div>`;
+}
+async function addUitsluiting() {
+  const pid = $("#ux-pid").value, van = parseInt($("#ux-van").value, 10), tot = parseInt($("#ux-tot").value, 10), notitie = $("#ux-note").value.trim() || null;
+  if (!pid) { showToast("Kies eerst een drank"); return; }
+  if (!Number.isFinite(van) || !Number.isFinite(tot) || van > tot) { showToast("Vul een geldig tafelbereik in"); return; }
+  const { data, error } = await sb.from("fill_uitsluitingen").insert({ product_id: pid, tafel_van: van, tafel_tot: tot, notitie }).select().single();
+  if (error) { showToast(error.code === "23505" ? "Die regel bestaat al" : "Opslaan mislukt: " + error.message); return; }
+  X.rows.push(data); render(); showToast(`${S.products[pid]?.name || pid} telt niet mee op tafel ${van}–${tot}`);
 }
 function viewKoppeling() {
   const u = S.untill || {};
@@ -725,6 +761,7 @@ $("#view").addEventListener("click", async e => {
   }
   else if (d.addpack) { const p = S.products[d.addpack]; await sb.from("warehouse").update({ qty: (S.warehouse[p.id] || 0) + p.pack_size }).eq("product_id", p.id); }
   else if (d.delteam) { await sb.from("team_members").delete().eq("email", d.delteam); S.team = S.team.filter(x => x !== d.delteam); render(); }
+  else if (d.uxdel) { const { error } = await sb.from("fill_uitsluitingen").delete().eq("id", d.uxdel); if (error) { showToast("Verwijderen mislukt: " + error.message); return; } X.rows = X.rows.filter(r => String(r.id) !== d.uxdel); render(); }
   else if (d.unmap) { await sb.from("untill_map").delete().eq("article_id", d.unmap); U.map = U.map.filter(m => String(m.article_id) !== d.unmap); render(); }
   else if (d.domap) {
     const pid = $("#mp-" + d.domap).value, factor = Math.max(0.1, parseFloat($("#mf-" + d.domap).value) || 1);
@@ -756,6 +793,15 @@ $("#view").addEventListener("change", async e => {
     const [fid, pid] = d.par.split("|"), v = Math.max(1, Math.min(500, parseInt(el.value, 10) || 1)), it = S.fridges.find(x => x.id === fid).items[pid];
     it.par = v; it.cur = Math.min(it.cur, v);
     await sb.from("fridge_items").update({ par: v, current: it.cur }).eq("fridge_id", fid).eq("product_id", pid);
+  }
+  else if (d.uxactief) { const r = X.rows.find(x => String(x.id) === d.uxactief); const { error } = await sb.from("fill_uitsluitingen").update({ actief: el.checked }).eq("id", d.uxactief); if (error) { el.checked = !el.checked; showToast("Opslaan mislukt: " + error.message); } else if (r) r.actief = el.checked; }
+  else if (d.uxvan || d.uxtot) {
+    const id = d.uxvan || d.uxtot, r = X.rows.find(x => String(x.id) === id), col = d.uxvan ? "tafel_van" : "tafel_tot", v = parseInt(el.value, 10);
+    const next = { ...r, [col]: v };
+    if (!r || !Number.isFinite(v) || next.tafel_van > next.tafel_tot) { if (r) el.value = r[col]; showToast("Van-tafel moet lager zijn dan tot-tafel"); return; }
+    const { error } = await sb.from("fill_uitsluitingen").update({ [col]: v }).eq("id", id);
+    if (error) { el.value = r[col]; showToast("Opslaan mislukt: " + error.message); return; }
+    r[col] = v; showToast("Opgeslagen");
   }
   else if (d.mapfactor) { const v = Math.max(0.1, parseFloat(el.value) || 1); await sb.from("untill_map").update({ factor: v }).eq("article_id", d.mapfactor); const m = U.map.find(x => String(x.article_id) === d.mapfactor); if (m) m.factor = v; }
   else if (d.movefridge) {
@@ -797,6 +843,7 @@ async function moveTo(pid, n) {
 $("#view").addEventListener("submit", async e => {
   if (e.target.id === "newdrink") { e.preventDefault(); addDrink(); return; }
   if (e.target.id === "nf-form") { e.preventDefault(); addFridge(); return; }
+  if (e.target.id === "ux-form") { e.preventDefault(); addUitsluiting(); return; }
   if (e.target.id !== "teamform") return; e.preventDefault();
   const email = $("#teamemail").value.trim().toLowerCase(); if (!email) return;
   const { error } = await sb.from("team_members").insert({ email });
