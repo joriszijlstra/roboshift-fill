@@ -47,6 +47,14 @@
     <p class="ok" id="loginok" hidden></p>
     <button class="btn primary" id="loginbtn" type="submit">Inloggen</button>
     <button class="linkbtn" id="signupbtn" type="button">Nog geen account? Maak er een aan</button>
+    <button class="linkbtn" id="forgotbtn" type="button">Wachtwoord vergeten?</button>
+  </form>
+  <form id="pwform" hidden>
+    <h1 class="rs-h1 rs-login"><span class="rs-lockup" role="img" aria-label="RoboShift Fill"><span class="rs-icon"></span><span class="rs-sep"></span><span class="rs-wm"><b>ROBOSHIFT</b><small>SHIFT HAPPENS</small></span><span class="rs-sep"></span><span class="rs-prod">Fill</span></span></h1>
+    <p class="note" style="margin:0">Kies een nieuw wachtwoord.</p>
+    <label>Nieuw wachtwoord<input id="newpw" type="password" autocomplete="new-password" required minlength="6"></label>
+    <p class="err" id="pwerr" hidden></p>
+    <button class="btn primary" type="submit">Opslaan en inloggen</button>
   </form>
 </div>
 

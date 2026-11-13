@@ -1,4 +1,6 @@
 /* Fill (De Kwikkel): live bijvullen per koeling, data uit Supabase (verkopen komen via unTill) */
+// Link uit de wachtwoord-resetmail: eerst een nieuw wachtwoord laten kiezen
+const RECOVERY = /type=recovery/.test(location.hash);
 const sb = supabase.createClient(window.BIJVUL_CONFIG.url, window.BIJVUL_CONFIG.key, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -18,6 +20,7 @@ const readRt = () => (document.cookie.match(/(?:^|; )bv_rt=([^;]*)/) || [])[1];
 const writeRt = t => { document.cookie = `${RT_COOKIE}=${t ? encodeURIComponent(t) : ""}; Max-Age=${t ? 31536000 : 0}; Path=/; SameSite=Lax${location.protocol === "https:" ? "; Secure" : ""}`; };
 const remember = () => store.get("bv-remember", "1") === "1";
 async function boot() {
+  if (RECOVERY) return showRecovery();
   let { data: { session } } = await sb.auth.getSession();
   // Niet onthouden en de app is opnieuw opgestart: uitloggen
   if (session && !remember() && !(() => { try { return sessionStorage.getItem("bv-alive"); } catch (e) { return null; } })()) { writeRt(null); await sb.auth.signOut({ scope: "local" }); session = null; }
@@ -49,6 +52,29 @@ $("#loginform").addEventListener("submit", async e => {
   if (error) { $("#loginerr").textContent = "Inloggen lukt niet: controleer je e-mail en wachtwoord."; $("#loginerr").hidden = false; return; }
   if (keep) navigator.storage?.persist?.().catch(() => {});
   boot();
+});
+$("#forgotbtn").onclick = async () => {
+  const email = $("#email").value.trim();
+  $("#loginok").hidden = true;
+  if (!email) { $("#loginerr").textContent = "Vul eerst je e-mailadres in."; $("#loginerr").hidden = false; return; }
+  $("#loginerr").hidden = true;
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+  if (error) { $("#loginerr").textContent = "Versturen lukt niet: " + error.message; $("#loginerr").hidden = false; return; }
+  $("#loginok").textContent = "Check je mail en klik op de link om een nieuw wachtwoord te kiezen."; $("#loginok").hidden = false;
+};
+function showRecovery() {
+  $("#app").hidden = true; $("#login").hidden = false; $("#loginform").hidden = true; $("#pwform").hidden = false; $("#newpw").focus();
+}
+$("#pwform").addEventListener("submit", async e => {
+  e.preventDefault(); $("#pwerr").hidden = true;
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { $("#pwerr").textContent = "Deze link is verlopen of al gebruikt. Vraag een nieuwe aan via Wachtwoord vergeten."; $("#pwerr").hidden = false; return; }
+  const { error } = await sb.auth.updateUser({ password: $("#newpw").value });
+  if (error) { $("#pwerr").textContent = "Opslaan lukt niet: " + error.message; $("#pwerr").hidden = false; return; }
+  store.set("bv-remember", "1"); store.set("bv-email", session.user.email);
+  try { sessionStorage.setItem("bv-alive", "1"); } catch (e) {}
+  if (session.refresh_token) writeRt(session.refresh_token);
+  location.replace(location.origin + location.pathname);
 });
 $("#signupbtn").onclick = async () => {
   const email = $("#email").value.trim(), password = $("#password").value;
