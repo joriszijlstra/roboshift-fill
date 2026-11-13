@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>RoboShift Fill – Eetcafé de Kwikkel</title>
+<!-- App-icoon (RoboJobs-symbool). iOS kent één icoon voor het beginscherm; het tabblad-icoon volgt licht/donker. -->
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="favicon-light.png" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/png" href="favicon-dark.png" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Fill">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#152127" media="(prefers-color-scheme: dark)">
+<script>try { const t = localStorage.getItem("bv-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Barlow+Semi+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="weer.css">
+<style>
+  html, body { margin: 0; }
+  [hidden] { display: none !important; }
+  .login { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; }
+  .login form { width: min(380px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 28px 24px; display: grid; gap: 14px; }
+  .login h1 { margin: 0; font-family: var(--font-display); font-size: 2rem; }
+  .login label { display: grid; gap: 4px; font-size: .9rem; color: var(--muted); }
+  .login input { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); font-size: 1rem; }
+  .login .err { color: var(--crit); font-size: .9rem; margin: 0; }
+  .login .ok { color: var(--ok); font-size: .9rem; margin: 0; }
+  .login .keep { display: flex; align-items: center; gap: 8px; color: var(--fg); font-size: .95rem; cursor: pointer; }
+  .login .keep input { width: 20px; height: 20px; accent-color: var(--accent); }
+  .linkbtn { background: none; border: 0; color: var(--accent); text-decoration: underline; padding: 0; font-size: .9rem; justify-self: start; }
+</style>
+</head>
+<body>
+<div id="login" class="login" hidden>
+  <form id="loginform">
+    <h1 class="rs-h1 rs-login"><span class="rs-lockup" role="img" aria-label="RoboShift Fill"><span class="rs-icon"></span><span class="rs-sep"></span><span class="rs-wm"><b>ROBOSHIFT</b><small>SHIFT HAPPENS</small></span><span class="rs-sep"></span><span class="rs-prod">Fill</span></span></h1>
+    <p class="note" style="margin:0">De Kwikkel. Log in met je account.</p>
+    <label>E-mail<input id="email" type="email" autocomplete="username" required></label>
+    <label>Wachtwoord<input id="password" type="password" autocomplete="current-password" required minlength="6"></label>
+    <label class="keep"><input type="checkbox" id="remember" checked> Ingelogd blijven op dit apparaat</label>
+    <p class="err" id="loginerr" hidden></p>
+    <p class="ok" id="loginok" hidden></p>
+    <button class="btn primary" id="loginbtn" type="submit">Inloggen</button>
+    <button class="linkbtn" id="signupbtn" type="button">Nog geen account? Maak er een aan</button>
+  </form>
+</div>
+
+<div id="app" hidden>
+<header class="top">
+  <div class="wrap topbar">
+    <div class="brand"><h1 class="rs-h1"><span class="rs-lockup" role="img" aria-label="RoboShift Fill"><span class="rs-icon"></span><span class="rs-sep"></span><span class="rs-wm"><b>ROBOSHIFT</b><small>SHIFT HAPPENS</small></span><span class="rs-sep"></span><span class="rs-prod">Fill</span></span></h1><span class="venue">Eetcafé de Kwikkel</span></div>
+    <div class="sync"><span class="dot" id="syncdot"></span><span id="synctext" class="synctext">Verbinden…</span>
+      <button class="themebtn" id="themebtn" type="button" aria-label="Licht of donker"></button>
+      <button class="linkbtn logout" id="logout">Uitloggen</button></div>
+  </div>
+  <nav class="wrap tabs" role="tablist" id="tabs">
+    <button role="tab" data-tab="koelingen" aria-selected="true">Bijvullen<span class="count num" id="c-koel">0</span></button>
+    <button role="tab" data-tab="pakken" aria-selected="false">Pakken<span class="lg"> in magazijn</span></button>
+    <button role="tab" data-tab="dashboard" aria-selected="false">Dashboard</button>
+    <button role="tab" data-tab="analyse" aria-selected="false">Analyse</button>
+    <button role="tab" data-tab="magazijn" aria-selected="false">Magazijn<span class="lg">voorraad</span></button>
+    <button role="tab" data-tab="instellingen" aria-selected="false">Instellingen</button>
+  </nav>
+</header>
+<main class="wrap" id="view"></main>
+<details class="feed" id="feed" open>
+  <summary><span class="dot" id="feeddot"></span><span class="f-title">Laatste verkopen</span><span class="f-last" id="feedlast"></span><svg class="f-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></summary>
+  <ol id="feedlist"></ol>
+</details>
+<div class="toast" id="toast" hidden><span id="toasttext"></span><button id="undo">Ongedaan maken</button></div>
+</div>
+
+<script src="supabase.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+<script src="analyse.js"></script>
+<script src="weer.js"></script>
+</body>
+</html>

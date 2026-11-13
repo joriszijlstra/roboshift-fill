@@ -1,0 +1,21 @@
+/* Weerstrook (Bijvullen) en weerkaart (Dashboard) */
+.wx { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-bottom: 10px; padding: 6px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; font-size: .9rem; }
+.wx-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+.wx-now, .wx-day { display: inline-flex; align-items: baseline; gap: 5px; white-space: nowrap; }
+.wx small { color: var(--muted); }
+.wx-day small { text-transform: capitalize; }
+.wx-ico { font-size: 1.1rem; line-height: 1; align-self: center; }
+.wx-ico.big { font-size: 1.8rem; }
+.wx-lbl { color: var(--muted); }
+.wx-adv { flex: 1 1 260px; display: flex; flex-direction: column; min-width: 0; padding: 4px 10px; border-radius: 8px; border-left: 4px solid var(--ok); background: var(--ok-soft); }
+.wx-adv.calm { border-left-color: var(--accent); background: var(--accent-soft); }
+.wx-adv b { font-size: .9rem; }
+.wx-adv small { color: var(--fg); opacity: .85; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.wx-card .wx-days { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 12px; margin-top: 8px; }
+.wx-dhead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.wx-dhead div { display: flex; flex-direction: column; min-width: 0; }
+.wx-dhead small { color: var(--muted); }
+.wx-f { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: .88rem; }
+.wx-f li { display: flex; justify-content: space-between; gap: 8px; border-bottom: 1px dashed var(--line); padding: 2px 0; }
+.wx-f b.up { color: var(--ok); }
+.wx-f b.down { color: var(--crit); }
