@@ -26,8 +26,8 @@ async function boot() {
     session = r.data?.session || null; if (!session) writeRt(null);
   }
   if (!session) return showLogin();
-  const { data: ok, error } = await sb.rpc("is_team");
-  if (error || !ok) return showLogin(`Je account (${session.user.email}) heeft nog geen toegang. Vraag Joris om je toe te voegen onder Instellingen.`, true);
+  const access = await resolveOrg();
+  if (!access.ok) return showLogin(`Je account (${session.user.email}) heeft nog geen toegang. Vraag Joris om je toe te voegen onder Instellingen.`, true);
   $("#login").hidden = true; $("#app").hidden = false;
   await loadAll(); subscribe(); render();
   loadSignals(); setInterval(loadSignals, 60e3);
@@ -78,12 +78,12 @@ $("#themebtn").onclick = () => { const order = ["auto", "light", "dark"]; setThe
 // ---------- Data ----------
 async function loadAll() {
   const [p, f, fi, w, st, sl] = await Promise.all([
-    sb.from("products").select("*").order("pick_order"),
-    sb.from("fridges").select("*").order("sort_order"),
-    sb.from("fridge_items").select("*"),
-    sb.from("warehouse").select("*"),
-    sb.from("settings").select("*"),
-    sb.from("sales").select("product_id, fridge_id, qty, sold_at").order("sold_at", { ascending: false }).limit(12),
+    tbl("products").select("*").order("pick_order"),
+    tbl("fridges").select("*").order("sort_order"),
+    tbl("fridge_items").select("*"),
+    tbl("warehouse").select("*"),
+    tbl("settings").select("*"),
+    tbl("sales").select("product_id, fridge_id, qty, sold_at").order("sold_at", { ascending: false }).limit(12),
   ]);
   S.products = Object.fromEntries(p.data.map(x => [x.id, x]));
   S.order = p.data.map(x => x.id);
@@ -108,13 +108,13 @@ function feedEntry(s) {
 let dashTimer = null, frTimer = null;
 function subscribe() {
   sb.channel("live")
-    .on("postgres_changes", { event: "*", schema: "public", table: "fridge_items" }, e => { const o = e.old; if (o?.fridge_id && (o.fridge_id !== e.new?.fridge_id || e.eventType === "DELETE")) delete S.fridges.find(f => f.id === o.fridge_id)?.items[o.product_id]; if (e.new?.fridge_id) setItem(e.new); queueRender(); })
-    .on("postgres_changes", { event: "*", schema: "public", table: "warehouse" }, e => { if (e.new?.product_id) S.warehouse[e.new.product_id] = +e.new.qty; queueRender(); })
-    .on("postgres_changes", { event: "INSERT", schema: "public", table: "sales" }, e => { S.feed.unshift(feedEntry(e.new)); S.feed = S.feed.slice(0, 12); renderFeed(); renderTabs(); queueSignals(); })
-    .on("postgres_changes", { event: "*", schema: "public", table: "settings" }, e => { if (e.new?.key) applySetting(e.new); renderTabs(); if (e.new?.key !== "untill") queueRender(); })
-    .on("postgres_changes", { event: "*", schema: "public", table: "products" }, e => { if (e.new?.id) { S.products[e.new.id] = e.new; S.order = Object.values(S.products).sort((a, b) => a.pick_order - b.pick_order).map(x => x.id); } queueRender(); })
-    .on("postgres_changes", { event: "*", schema: "public", table: "fridges" }, () => { clearTimeout(frTimer); frTimer = setTimeout(() => loadAll().then(queueRender), 800); })
-    .on("postgres_changes", { event: "INSERT", schema: "public", table: "refills" }, () => { if (tab === "dashboard") { clearTimeout(dashTimer); dashTimer = setTimeout(loadDash, 1500); } })
+    .on("postgres_changes", { event: "*", schema: "public", table: "fridge_items", ...orgFilter() }, e => { const o = e.old; if (o?.fridge_id && (o.fridge_id !== e.new?.fridge_id || e.eventType === "DELETE")) delete S.fridges.find(f => f.id === o.fridge_id)?.items[o.product_id]; if (e.new?.fridge_id) setItem(e.new); queueRender(); })
+    .on("postgres_changes", { event: "*", schema: "public", table: "warehouse", ...orgFilter() }, e => { if (e.new?.product_id) S.warehouse[e.new.product_id] = +e.new.qty; queueRender(); })
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "sales", ...orgFilter() }, e => { S.feed.unshift(feedEntry(e.new)); S.feed = S.feed.slice(0, 12); renderFeed(); renderTabs(); queueSignals(); })
+    .on("postgres_changes", { event: "*", schema: "public", table: "settings", ...orgFilter() }, e => { if (e.new?.key) applySetting(e.new); renderTabs(); if (e.new?.key !== "untill") queueRender(); })
+    .on("postgres_changes", { event: "*", schema: "public", table: "products", ...orgFilter() }, e => { if (e.new?.id) { S.products[e.new.id] = e.new; S.order = Object.values(S.products).sort((a, b) => a.pick_order - b.pick_order).map(x => x.id); } queueRender(); })
+    .on("postgres_changes", { event: "*", schema: "public", table: "fridges", ...orgFilter() }, () => { clearTimeout(frTimer); frTimer = setTimeout(() => loadAll().then(queueRender), 800); })
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "refills", ...orgFilter() }, () => { if (tab === "dashboard") { clearTimeout(dashTimer); dashTimer = setTimeout(loadDash, 1500); } })
     .subscribe(status => { $("#syncdot").classList.toggle("paused", status !== "SUBSCRIBED"); });
 }
 function queueRender() {
@@ -148,13 +148,13 @@ const fmt = n => Math.round(n).toLocaleString("nl-NL");
 async function refill(pairs, label) {
   const ids = []; let total = 0;
   for (const [fid, pid] of pairs) {
-    const { data: n, error } = await sb.rpc("do_refill", { p_fridge: fid, p_product: pid });
+    const { data: n, error } = await rpc("do_refill", { p_fridge: fid, p_product: pid });
     if (error) { showToast("Opslaan mislukt: " + error.message); return; }
     if (n > 0) {
       total += n;
       // Meteen lokaal bijwerken, niet wachten op realtime
       const it = S.fridges.find(f => f.id === fid)?.items[pid]; if (it) { it.cur = Math.max(it.cur, it.par); it.low = null; }
-      const { data } = await sb.from("refills").select("id").eq("fridge_id", fid).eq("product_id", pid).order("id", { ascending: false }).limit(1);
+      const { data } = await tbl("refills").select("id").eq("fridge_id", fid).eq("product_id", pid).order("id", { ascending: false }).limit(1);
       if (data?.[0]) ids.push(data[0].id);
     }
   }
@@ -168,9 +168,9 @@ function showToast(text, ids) {
 }
 $("#undo").onclick = async () => {
   if (!lastUndo) return; const ids = lastUndo; lastUndo = null; $("#toast").hidden = true;
-  for (const id of ids) await sb.rpc("undo_refill", { p_id: id });
+  for (const id of ids) await rpc("undo_refill", { p_id: id });
 };
-async function saveSetting(key, value) { S[key] = value; render(); await sb.from("settings").upsert({ key, value }); }
+async function saveSetting(key, value) { S[key] = value; render(); await tbl("settings").upsert({ key, value }); }
 
 // ---------- Weergaven ----------
 function renderTabs() {
@@ -216,7 +216,7 @@ function ring(pct) {
 const SIG = { rows: [], at: 0 };
 let sigTimer = null;
 async function loadSignals() {
-  const { data, error } = await sb.rpc("signals");
+  const { data, error } = await rpc("signals");
   if (!error) { SIG.rows = data || []; SIG.at = Date.now(); if (tab === "koelingen") queueRender(); }
 }
 function queueSignals() { clearTimeout(sigTimer); sigTimer = setTimeout(loadSignals, 4000); }
@@ -388,10 +388,10 @@ async function addDrink() {
   for (let i = 2; S.products[id]; i++) id = id.replace(/-\d+$/, "") + "-" + i;
   const pick = Math.max(0, ...Object.values(S.products).map(p => p.pick_order).filter(po => po < 900)) + 1;
   const product = { id, name, pack: $("#nd-pack").value, pack_size: size, ratio, pick_order: pick };
-  let r = await sb.from("products").insert(product);
-  if (!r.error) r = await sb.from("fridge_items").insert({ fridge_id: fid, product_id: id, par, current: par, visible: true });
-  if (!r.error) r = await sb.from("warehouse").insert({ product_id: id, qty: 0 });
-  if (!r.error && art) { r = await sb.from("untill_map").insert({ article_id: art, product_id: id, factor: 1 }); if (!r.error) U.map.push({ article_id: art, product_id: id, factor: 1 }); }
+  let r = await tbl("products").insert(product);
+  if (!r.error) r = await tbl("fridge_items").insert({ fridge_id: fid, product_id: id, par, current: par, visible: true });
+  if (!r.error) r = await tbl("warehouse").insert({ product_id: id, qty: 0 });
+  if (!r.error && art) { r = await tbl("untill_map").insert({ article_id: art, product_id: id, factor: 1 }); if (!r.error) U.map.push({ article_id: art, product_id: id, factor: 1 }); }
   if (r.error) { showToast("Toevoegen mislukt: " + r.error.message); return; }
   S.products[id] = { ...product, serve: null }; S.order.push(id);
   const f = S.fridges.find(x => x.id === fid); f.items[id] = { par, cur: par, show: true, low: null }; S.warehouse[id] = 0;
@@ -420,7 +420,7 @@ async function addFridge() {
   let id = "f-" + name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   for (let i = 2; S.fridges.some(f => f.id === id); i++) id = id.replace(/-\d+$/, "") + "-" + i;
   const sub = $("#nf-sub").value.trim(), sort_order = S.fridges.length + 1;
-  const { error } = await sb.from("fridges").insert({ id, name, sub, sort_order });
+  const { error } = await tbl("fridges").insert({ id, name, sub, sort_order });
   if (error) { showToast("Toevoegen mislukt: " + error.message); return; }
   S.fridges.push({ id, name, sub, items: {} }); render();
   showToast(`${name} toegevoegd. Zet er dranken in via Dranken op scherm.`);
@@ -428,15 +428,15 @@ async function addFridge() {
 async function moveFridge(id, dir) {
   const i = S.fridges.findIndex(f => f.id === id), j = i + dir; if (i < 0 || j < 0 || j >= S.fridges.length) return;
   [S.fridges[i], S.fridges[j]] = [S.fridges[j], S.fridges[i]]; render();
-  await Promise.all(S.fridges.map((f, k) => sb.from("fridges").update({ sort_order: k + 1 }).eq("id", f.id)));
+  await Promise.all(S.fridges.map((f, k) => tbl("fridges").update({ sort_order: k + 1 }).eq("id", f.id)));
 }
 async function deleteFridge(id) {
   const f = S.fridges.find(x => x.id === id); SET.delFridge = null;
   if (!f || Object.keys(f.items).length) { showToast("Verplaats eerst de dranken uit deze koeling"); render(); return; }
-  const { error } = await sb.from("fridges").delete().eq("id", id);
+  const { error } = await tbl("fridges").delete().eq("id", id);
   if (error) { showToast("Verwijderen mislukt: " + error.message); render(); return; }
   S.fridges = S.fridges.filter(x => x.id !== id); render(); showToast(`${f.name} verwijderd`);
-  await Promise.all(S.fridges.map((x, k) => sb.from("fridges").update({ sort_order: k + 1 }).eq("id", x.id)));
+  await Promise.all(S.fridges.map((x, k) => tbl("fridges").update({ sort_order: k + 1 }).eq("id", x.id)));
 }
 function setVolgorde() {
   const list = S.order.filter(pid => SET.hidden || shownAnywhere(pid));
@@ -472,16 +472,16 @@ async function pushOn() {
     const reg = await navigator.serviceWorker.register("sw.js"); await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64u(window.BIJVUL_CONFIG.vapid) });
     const j = sub.toJSON(), { data: { session } } = await sb.auth.getSession();
-    const { error } = await sb.from("push_subscriptions").upsert({ endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, email: session?.user?.email || null });
+    const { error } = await tbl("push_subscriptions").upsert({ endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, email: session?.user?.email || null });
     if (error) throw error;
-    await sb.functions.invoke("push-signals", { body: { test: true, endpoint: j.endpoint } });
+    await sb.functions.invoke("push-signals", { body: { test: true, endpoint: j.endpoint, org_id: TENANT.org } });
     showToast("Pushmeldingen staan aan op dit apparaat");
   } catch (e) { showToast("Aanzetten lukt niet: " + (e.message || e)); }
   refreshPush();
 }
 async function pushOff() {
   const reg = await navigator.serviceWorker.getRegistration(), sub = await reg?.pushManager.getSubscription();
-  if (sub) { await sb.from("push_subscriptions").delete().eq("endpoint", sub.endpoint); await sub.unsubscribe(); }
+  if (sub) { await tbl("push_subscriptions").delete().eq("endpoint", sub.endpoint); await sub.unsubscribe(); }
   showToast("Pushmeldingen staan uit op dit apparaat"); refreshPush();
 }
 function pushCard() {
@@ -510,8 +510,8 @@ function setAlgemeen() {
 const U = { map: [], arts: {}, search: "", loaded: false };
 async function loadKoppeling() {
   const [m, a] = await Promise.all([
-    sb.from("untill_map").select("article_id, product_id, factor"),
-    sb.from("untill_articles").select("id, name, number, department, sold_qty, last_sold").order("sold_qty", { ascending: false }).limit(2000),
+    tbl("untill_map").select("article_id, product_id, factor"),
+    tbl("untill_articles").select("id, name, number, department, sold_qty, last_sold").order("sold_qty", { ascending: false }).limit(2000),
   ]);
   U.map = m.data || []; U.arts = Object.fromEntries((a.data || []).map(x => [x.id, x])); U.loaded = true;
   await loadUitsluiten();
@@ -521,7 +521,7 @@ async function loadKoppeling() {
 // (bijv. cola op een personeelstafel, geschonken uit de grote fles). Geldt alleen voor nieuwe aanslagen.
 const X = { rows: [], loaded: false };
 async function loadUitsluiten() {
-  const { data } = await sb.from("fill_uitsluitingen").select("id, product_id, tafel_van, tafel_tot, actief, notitie").order("tafel_van").order("product_id");
+  const { data } = await tbl("fill_uitsluitingen").select("id, product_id, tafel_van, tafel_tot, actief, notitie").order("tafel_van").order("product_id");
   X.rows = data || []; X.loaded = true;
 }
 function viewUitsluiten() {
@@ -547,7 +547,7 @@ async function addUitsluiting() {
   const pid = $("#ux-pid").value, van = parseInt($("#ux-van").value, 10), tot = parseInt($("#ux-tot").value, 10), notitie = $("#ux-note").value.trim() || null;
   if (!pid) { showToast("Kies eerst een drank"); return; }
   if (!Number.isFinite(van) || !Number.isFinite(tot) || van > tot) { showToast("Vul een geldig tafelbereik in"); return; }
-  const { data, error } = await sb.from("fill_uitsluitingen").insert({ product_id: pid, tafel_van: van, tafel_tot: tot, notitie }).select().single();
+  const { data, error } = await tbl("fill_uitsluitingen").insert({ product_id: pid, tafel_van: van, tafel_tot: tot, notitie }).select().single();
   if (error) { showToast(error.code === "23505" ? "Die regel bestaat al" : "Opslaan mislukt: " + error.message); return; }
   X.rows.push(data); render(); showToast(`${S.products[pid]?.name || pid} telt niet mee op tafel ${van}–${tot}`);
 }
@@ -587,7 +587,7 @@ function viewKoppeling() {
 const WD = ["ma", "di", "wo", "do", "vr", "za", "zo"], HOURS = [12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25];
 async function loadDash() {
   const n = period === "dag" ? 1 : period === "week" ? 7 : 30;
-  const [a, b] = await Promise.all([sb.rpc("dashboard", { p_days: n }), n === 30 ? null : sb.rpc("dashboard", { p_days: 30 })]);
+  const [a, b] = await Promise.all([rpc("dashboard", { p_days: n }), n === 30 ? null : rpc("dashboard", { p_days: 30 })]);
   dash = a.data; dash30 = b ? b.data : a.data;
   if (tab === "dashboard") render();
 }
@@ -727,7 +727,7 @@ function render() {
 $("#tabs").onclick = async e => {
   const b = e.target.closest("button"); if (!b) return;
   tab = b.dataset.tab; window.scrollTo(0, 0);
-  if (tab === "instellingen") { const { data } = await sb.from("team_members").select("email").order("email"); S.team = (data || []).map(x => x.email); await loadKoppeling(); }
+  if (tab === "instellingen") { const { data } = await tbl("team_members").select("email").order("email"); S.team = (data || []).map(x => x.email); await loadKoppeling(); }
   if (tab === "dashboard") dash = null;
   if (tab === "analyse") ana = null;
   placeFeed(); render();
@@ -741,7 +741,7 @@ $("#view").addEventListener("click", async e => {
   else if (d.sort) saveSetting("sort", d.sort);
   else if (d.sec) { SET.sec = d.sec; SET.q = ""; store.set("bv-sec", d.sec); window.scrollTo(0, 0); render(); }
   else if (d.fridge) { SET.fridge = d.fridge; store.set("bv-fridge", d.fridge); render(); }
-  else if (d.push) { if (d.push === "on") pushOn(); else if (d.push === "off") pushOff(); else { const sub = await (await navigator.serviceWorker.getRegistration())?.pushManager.getSubscription(); await sb.functions.invoke("push-signals", { body: { test: true, endpoint: sub?.endpoint } }); showToast("Testmelding verstuurd"); } }
+  else if (d.push) { if (d.push === "on") pushOn(); else if (d.push === "off") pushOff(); else { const sub = await (await navigator.serviceWorker.getRegistration())?.pushManager.getSubscription(); await sb.functions.invoke("push-signals", { body: { test: true, endpoint: sub?.endpoint, org_id: TENANT.org } }); showToast("Testmelding verstuurd"); } }
   else if (d.snooze) { snooze(d.snooze); render(); }
   else if (d.fmv) { const [id, dir] = d.fmv.split("|"); moveFridge(id, +dir); }
   else if ("fdel" in d) { const [id, yes] = d.fdel.split("|"); if (yes) deleteFridge(id); else { SET.delFridge = id || null; render(); } }
@@ -757,16 +757,16 @@ $("#view").addEventListener("click", async e => {
     [S.order[i], S.order[j]] = [S.order[j], S.order[i]]; render();
     const a = S.products[pid].pick_order, b = S.products[other].pick_order;
     S.products[pid].pick_order = b; S.products[other].pick_order = a;
-    await sb.from("products").update({ pick_order: b }).eq("id", pid); await sb.from("products").update({ pick_order: a }).eq("id", other);
+    await tbl("products").update({ pick_order: b }).eq("id", pid); await tbl("products").update({ pick_order: a }).eq("id", other);
   }
-  else if (d.addpack) { const p = S.products[d.addpack]; await sb.from("warehouse").update({ qty: (S.warehouse[p.id] || 0) + p.pack_size }).eq("product_id", p.id); }
-  else if (d.delteam) { await sb.from("team_members").delete().eq("email", d.delteam); S.team = S.team.filter(x => x !== d.delteam); render(); }
-  else if (d.uxdel) { const { error } = await sb.from("fill_uitsluitingen").delete().eq("id", d.uxdel); if (error) { showToast("Verwijderen mislukt: " + error.message); return; } X.rows = X.rows.filter(r => String(r.id) !== d.uxdel); render(); }
-  else if (d.unmap) { await sb.from("untill_map").delete().eq("article_id", d.unmap); U.map = U.map.filter(m => String(m.article_id) !== d.unmap); render(); }
+  else if (d.addpack) { const p = S.products[d.addpack]; await tbl("warehouse").update({ qty: (S.warehouse[p.id] || 0) + p.pack_size }).eq("product_id", p.id); }
+  else if (d.delteam) { await tbl("team_members").delete().eq("email", d.delteam); S.team = S.team.filter(x => x !== d.delteam); render(); }
+  else if (d.uxdel) { const { error } = await tbl("fill_uitsluitingen").delete().eq("id", d.uxdel); if (error) { showToast("Verwijderen mislukt: " + error.message); return; } X.rows = X.rows.filter(r => String(r.id) !== d.uxdel); render(); }
+  else if (d.unmap) { await tbl("untill_map").delete().eq("article_id", d.unmap); U.map = U.map.filter(m => String(m.article_id) !== d.unmap); render(); }
   else if (d.domap) {
     const pid = $("#mp-" + d.domap).value, factor = Math.max(0.1, parseFloat($("#mf-" + d.domap).value) || 1);
     if (!pid) { showToast("Kies eerst een drank"); return; }
-    const { error } = await sb.from("untill_map").insert({ article_id: d.domap, product_id: pid, factor });
+    const { error } = await tbl("untill_map").insert({ article_id: d.domap, product_id: pid, factor });
     if (error) { showToast("Koppelen mislukt: " + error.message); return; }
     U.map.push({ article_id: Number(d.domap), product_id: pid, factor }); render();
   }
@@ -784,36 +784,36 @@ $("#view").addEventListener("change", async e => {
     const id = d.fname || d.fsub, f = S.fridges.find(x => x.id === id), v = el.value.trim();
     if (d.fname && !v) { el.value = f.name; return; }
     const col = d.fname ? "name" : "sub"; f[col] = v;
-    const { error } = await sb.from("fridges").update({ [col]: v }).eq("id", id);
+    const { error } = await tbl("fridges").update({ [col]: v }).eq("id", id);
     showToast(error ? "Opslaan mislukt: " + error.message : "Opgeslagen"); return;
   }
-  if (d.show) { const [fid, pid] = d.show.split("|"); await sb.from("fridge_items").update({ visible: el.checked }).eq("fridge_id", fid).eq("product_id", pid); }
-  else if (d.ratio) { const v = Math.max(1, Math.min(50, parseInt(el.value, 10) || 1)); S.products[d.ratio].ratio = v; await sb.from("products").update({ ratio: v }).eq("id", d.ratio); }
+  if (d.show) { const [fid, pid] = d.show.split("|"); await tbl("fridge_items").update({ visible: el.checked }).eq("fridge_id", fid).eq("product_id", pid); }
+  else if (d.ratio) { const v = Math.max(1, Math.min(50, parseInt(el.value, 10) || 1)); S.products[d.ratio].ratio = v; await tbl("products").update({ ratio: v }).eq("id", d.ratio); }
   else if (d.par) {
     const [fid, pid] = d.par.split("|"), v = Math.max(1, Math.min(500, parseInt(el.value, 10) || 1)), it = S.fridges.find(x => x.id === fid).items[pid];
     it.par = v; it.cur = Math.min(it.cur, v);
-    await sb.from("fridge_items").update({ par: v, current: it.cur }).eq("fridge_id", fid).eq("product_id", pid);
+    await tbl("fridge_items").update({ par: v, current: it.cur }).eq("fridge_id", fid).eq("product_id", pid);
   }
-  else if (d.uxactief) { const r = X.rows.find(x => String(x.id) === d.uxactief); const { error } = await sb.from("fill_uitsluitingen").update({ actief: el.checked }).eq("id", d.uxactief); if (error) { el.checked = !el.checked; showToast("Opslaan mislukt: " + error.message); } else if (r) r.actief = el.checked; }
+  else if (d.uxactief) { const r = X.rows.find(x => String(x.id) === d.uxactief); const { error } = await tbl("fill_uitsluitingen").update({ actief: el.checked }).eq("id", d.uxactief); if (error) { el.checked = !el.checked; showToast("Opslaan mislukt: " + error.message); } else if (r) r.actief = el.checked; }
   else if (d.uxvan || d.uxtot) {
     const id = d.uxvan || d.uxtot, r = X.rows.find(x => String(x.id) === id), col = d.uxvan ? "tafel_van" : "tafel_tot", v = parseInt(el.value, 10);
     const next = { ...r, [col]: v };
     if (!r || !Number.isFinite(v) || next.tafel_van > next.tafel_tot) { if (r) el.value = r[col]; showToast("Van-tafel moet lager zijn dan tot-tafel"); return; }
-    const { error } = await sb.from("fill_uitsluitingen").update({ [col]: v }).eq("id", id);
+    const { error } = await tbl("fill_uitsluitingen").update({ [col]: v }).eq("id", id);
     if (error) { el.value = r[col]; showToast("Opslaan mislukt: " + error.message); return; }
     r[col] = v; showToast("Opgeslagen");
   }
-  else if (d.mapfactor) { const v = Math.max(0.1, parseFloat(el.value) || 1); await sb.from("untill_map").update({ factor: v }).eq("article_id", d.mapfactor); const m = U.map.find(x => String(x.article_id) === d.mapfactor); if (m) m.factor = v; }
+  else if (d.mapfactor) { const v = Math.max(0.1, parseFloat(el.value) || 1); await tbl("untill_map").update({ factor: v }).eq("article_id", d.mapfactor); const m = U.map.find(x => String(x.article_id) === d.mapfactor); if (m) m.factor = v; }
   else if (d.movefridge) {
     const [from, pid] = d.movefridge.split("|"), to = el.value, src = S.fridges.find(x => x.id === from), dst = S.fridges.find(x => x.id === to);
     if (!dst || to === from || dst.items[pid]) { if (dst?.items[pid]) showToast("Die drank staat daar al"); render(); return; }
     dst.items[pid] = src.items[pid]; delete src.items[pid]; render();
-    const { error } = await sb.from("fridge_items").update({ fridge_id: to }).eq("fridge_id", from).eq("product_id", pid);
+    const { error } = await tbl("fridge_items").update({ fridge_id: to }).eq("fridge_id", from).eq("product_id", pid);
     if (error) { showToast("Verplaatsen mislukt: " + error.message); src.items[pid] = dst.items[pid]; delete dst.items[pid]; render(); return; }
     showToast(`${S.products[pid].name} staat nu in ${dst.name}`);
   }
-  else if (d.pack) { S.products[d.pack].pack = el.value; await sb.from("products").update({ pack: el.value }).eq("id", d.pack); render(); }
-  else if (d.packsize) { const v = Math.max(1, Math.min(200, parseInt(el.value, 10) || 1)); S.products[d.packsize].pack_size = v; await sb.from("products").update({ pack_size: v }).eq("id", d.packsize); }
+  else if (d.pack) { S.products[d.pack].pack = el.value; await tbl("products").update({ pack: el.value }).eq("id", d.pack); render(); }
+  else if (d.packsize) { const v = Math.max(1, Math.min(200, parseInt(el.value, 10) || 1)); S.products[d.packsize].pack_size = v; await tbl("products").update({ pack_size: v }).eq("id", d.packsize); }
   else if (d.cur) {
     // Vol uit hetzelfde rijtje lezen: dat kan net gewijzigd zijn en nog niet terug zijn van de database
     const [fid, pid] = d.cur.split("|"), it = S.fridges.find(x => x.id === fid).items[pid];
@@ -821,12 +821,12 @@ $("#view").addEventListener("change", async e => {
     let v = Math.max(0, parseInt(el.value, 10) || 0); const capped = v > par;
     if (capped) { v = par; el.value = v; }
     it.par = par; it.cur = v; const low = v <= par * 0.3 ? (it.low || new Date().toISOString()) : null;
-    const { error } = await sb.from("fridge_items").update({ current: v, low_since: low }).eq("fridge_id", fid).eq("product_id", pid);
+    const { error } = await tbl("fridge_items").update({ current: v, low_since: low }).eq("fridge_id", fid).eq("product_id", pid);
     showToast(error ? "Opslaan mislukt: " + error.message : capped ? `Meer dan vol (${par}) kan niet, op ${par} gezet. Verhoog Vol als er meer in past.` : `${S.products[pid].name}: stand op ${v} gezet`);
   }
   else if (el.id === "showhidden") { SET.hidden = el.checked; render(); }
   else if (d.pos) { await moveTo(d.pos, parseInt(el.value, 10)); }
-  else if (d.stock) { await sb.from("warehouse").update({ qty: Math.max(0, parseInt(el.value, 10) || 0) }).eq("product_id", d.stock); }
+  else if (d.stock) { await tbl("warehouse").update({ qty: Math.max(0, parseInt(el.value, 10) || 0) }).eq("product_id", d.stock); }
 });
 // Drank direct naar plek n in de (getoonde) pakvolgorde; alleen gewijzigde pick_order's opslaan
 async function moveTo(pid, n) {
@@ -838,7 +838,7 @@ async function moveTo(pid, n) {
   const changed = list.map((x, i) => [x, slots[i]]).filter(([x, po]) => S.products[x].pick_order !== po);
   for (const [x, po] of changed) S.products[x].pick_order = po;
   S.order = Object.values(S.products).sort((a, b) => a.pick_order - b.pick_order).map(x => x.id); render();
-  await Promise.all(changed.map(([x, po]) => sb.from("products").update({ pick_order: po }).eq("id", x)));
+  await Promise.all(changed.map(([x, po]) => tbl("products").update({ pick_order: po }).eq("id", x)));
 }
 $("#view").addEventListener("submit", async e => {
   if (e.target.id === "newdrink") { e.preventDefault(); addDrink(); return; }
@@ -846,7 +846,7 @@ $("#view").addEventListener("submit", async e => {
   if (e.target.id === "ux-form") { e.preventDefault(); addUitsluiting(); return; }
   if (e.target.id !== "teamform") return; e.preventDefault();
   const email = $("#teamemail").value.trim().toLowerCase(); if (!email) return;
-  const { error } = await sb.from("team_members").insert({ email });
+  const { error } = await tbl("team_members").insert({ email });
   if (error) { showToast("Toevoegen mislukt: " + error.message); return; }
   S.team.push(email); render();
 });
