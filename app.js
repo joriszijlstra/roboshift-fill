@@ -1,4 +1,7 @@
 /* Fill (De Kwikkel): live bijvullen per koeling, data uit Supabase (verkopen komen via unTill) */
+// Herstellink uit de mail ("Wachtwoord vergeten?"): lees de URL voordat Supabase hem opruimt
+const AUTH_URL = new URLSearchParams(location.hash.slice(1) + "&" + location.search.slice(1));
+let recovering = AUTH_URL.get("type") === "recovery";
 const sb = supabase.createClient(window.BIJVUL_CONFIG.url, window.BIJVUL_CONFIG.key, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -19,6 +22,11 @@ const writeRt = t => { document.cookie = `${RT_COOKIE}=${t ? encodeURIComponent(
 const remember = () => store.get("bv-remember", "1") === "1";
 async function boot() {
   let { data: { session } } = await sb.auth.getSession();
+  if (recovering) return showReset(session);
+  if (AUTH_URL.get("error_code") === "otp_expired" || /recovery|email link/i.test(AUTH_URL.get("error_description") || "")) {
+    history.replaceState(null, "", location.pathname);
+    return showLogin("Deze herstellink is verlopen of al gebruikt. Vul je e-mail in en klik opnieuw op 'Wachtwoord vergeten?'.");
+  }
   // Niet onthouden en de app is opnieuw opgestart: uitloggen
   if (session && !remember() && !(() => { try { return sessionStorage.getItem("bv-alive"); } catch (e) { return null; } })()) { writeRt(null); await sb.auth.signOut({ scope: "local" }); session = null; }
   if (!session && remember() && readRt()) {
@@ -52,11 +60,58 @@ $("#loginform").addEventListener("submit", async e => {
 });
 $("#signupbtn").onclick = async () => {
   const email = $("#email").value.trim(), password = $("#password").value;
-  if (!email || password.length < 6) { $("#loginerr").textContent = "Vul je e-mail en een wachtwoord van minstens 6 tekens in."; $("#loginerr").hidden = false; return; }
+  if (!email || password.length < 8) { $("#loginerr").textContent = "Vul je e-mail en een wachtwoord van minstens 8 tekens in."; $("#loginerr").hidden = false; return; }
   const { error } = await sb.auth.signUp({ email, password, options: { emailRedirectTo: location.origin + location.pathname } });
   if (error) { $("#loginerr").textContent = "Account aanmaken lukt niet: " + error.message; $("#loginerr").hidden = false; return; }
   $("#loginok").textContent = "Check je mail en klik op de bevestigingslink. Daarna kun je inloggen."; $("#loginok").hidden = false;
 };
+// Wachtwoord vergeten: Supabase mailt een herstellink die terugkomt op deze pagina
+$("#forgotbtn").onclick = async () => {
+  const email = $("#email").value.trim();
+  $("#loginerr").hidden = true; $("#loginok").hidden = true;
+  if (!/^\S+@\S+\.\S+$/.test(email)) { $("#loginerr").textContent = "Vul eerst je e-mailadres in, dan sturen we je een herstellink."; $("#loginerr").hidden = false; $("#email").focus(); return; }
+  $("#forgotbtn").disabled = true;
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+  $("#forgotbtn").disabled = false;
+  if (error) {
+    $("#loginerr").textContent = /rate|seconds|too many/i.test(error.message) ? "Er is net al een herstelmail verstuurd. Wacht even en probeer het dan opnieuw." : "Herstelmail versturen lukt niet: " + error.message;
+    $("#loginerr").hidden = false; return;
+  }
+  store.set("bv-email", email);
+  $("#loginok").textContent = `Als ${email} een account heeft, staat er nu een mail met een herstellink in je inbox (kijk ook bij spam). Open de link op dit apparaat.`; $("#loginok").hidden = false;
+};
+function showReset(session) {
+  $("#app").hidden = true; $("#login").hidden = false;
+  $("#loginform").hidden = true; $("#resetform").hidden = false;
+  history.replaceState(null, "", location.pathname);
+  if (!session) {
+    $("#resetfor").textContent = "";
+    $("#reseterr").textContent = "Deze herstellink werkt niet (meer). Vraag op het inlogscherm een nieuwe aan."; $("#reseterr").hidden = false;
+    $("#resetbtn").hidden = true; $("#resetcancel").textContent = "Terug naar inloggen"; return;
+  }
+  $("#resetfor").textContent = " voor " + session.user.email;
+  $("#newpw").focus();
+}
+$("#resetform").addEventListener("submit", async e => {
+  e.preventDefault();
+  const pw = $("#newpw").value, pw2 = $("#newpw2").value;
+  $("#reseterr").hidden = true;
+  if (pw.length < 8) { $("#reseterr").textContent = "Kies een wachtwoord van minstens 8 tekens."; $("#reseterr").hidden = false; return; }
+  if (pw !== pw2) { $("#reseterr").textContent = "De twee wachtwoorden zijn niet gelijk."; $("#reseterr").hidden = false; return; }
+  $("#resetbtn").disabled = true;
+  const { error } = await sb.auth.updateUser({ password: pw });
+  $("#resetbtn").disabled = false;
+  if (error) {
+    $("#reseterr").textContent = /different from the old|same/i.test(error.message) ? "Dit is je oude wachtwoord. Kies een ander." : /weak|least|characters/i.test(error.message) ? "Dit wachtwoord is te zwak. Kies een langer wachtwoord." : "Opslaan lukt niet: " + error.message;
+    $("#reseterr").hidden = false; return;
+  }
+  recovering = false;
+  try { sessionStorage.setItem("bv-alive", "1"); } catch (e) {}
+  $("#resetform").hidden = true; $("#loginform").hidden = false;
+  await boot();
+  showToast("Nieuw wachtwoord opgeslagen");
+});
+$("#resetcancel").onclick = async () => { recovering = false; await sb.auth.signOut({ scope: "local" }); location.replace(location.pathname); };
 $("#logout").onclick = async () => { writeRt(null); await sb.auth.signOut(); location.reload(); };
 $("#email").value = store.get("bv-email", ""); $("#remember").checked = remember();
 
@@ -876,6 +931,7 @@ async function wake() { try { await navigator.wakeLock?.request("screen"); } cat
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { wake(); if (!$("#app").hidden) loadAll().then(render); } });
 paintTheme(); wake();
 sb.auth.onAuthStateChange((ev, session) => {
+  if (ev === "PASSWORD_RECOVERY" && !recovering) { recovering = true; showReset(session); }
   if (session?.refresh_token && remember()) writeRt(session.refresh_token);
   if (ev === "SIGNED_OUT") { writeRt(null); location.reload(); }
 });
