@@ -8,4 +8,8 @@ Bijvulscherm voor de horeca (eerste klant: Eetcafé de Kwikkel). Statische site:
 
 Data en logica staan in Supabase (tabellen, SQL-functies, edge functions zoals `untill-sync`).
 
-Live: https://kwikkel-bijvulscherm.netlify.app (handmatig gedeployed).
+Live: https://fill.roboshift.nl (GitHub Pages, branch `main`, map `/`; het bestand `CNAME` zet het domein). DNS bij Strato: CNAME `fill` -> `joriszijlstra.github.io`.
+
+Oud adres: https://kwikkel-bijvulscherm.netlify.app (handmatig gedeployed), blijft draaien tot de overstap definitief is.
+
+Na een domeinwissel: in Supabase (Authentication > URL Configuration) het nieuwe adres bij de Redirect URLs zetten, anders werken bevestigings- en herstelmails niet. Inloggen en pushmeldingen zijn per adres, dus op elk toestel opnieuw.
