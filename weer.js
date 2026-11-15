@@ -4,7 +4,7 @@
 let WX = null, wxBusy = false;
 async function loadWeer() {
   if (wxBusy) return; wxBusy = true;
-  const { data, error } = await sb.rpc("weather_outlook");
+  const { data, error } = await rpc("weather_outlook");
   wxBusy = false;
   if (!error && data) { WX = data; if (tab === "koelingen" || tab === "dashboard") render(); }
 }

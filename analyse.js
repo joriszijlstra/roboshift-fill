@@ -7,7 +7,7 @@ const WD_LONG = ["maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zate
 
 async function loadAna() {
   if (anaBusy) return; anaBusy = true;
-  const [r, sp] = await Promise.all([sb.rpc("analyses", { p_days: ANA_DAYS[anaPeriod] }), sb.rpc("analyses_space", { p_days: ANA_DAYS[anaPeriod] })]);
+  const [r, sp] = await Promise.all([rpc("analyses", { p_days: ANA_DAYS[anaPeriod] }), rpc("analyses_space", { p_days: ANA_DAYS[anaPeriod] })]);
   anaBusy = false;
   ana = r.error ? { error: r.error.message } : r.data; anaSpace = sp.error ? null : sp.data;
   if (tab === "analyse") render();
@@ -101,7 +101,7 @@ document.getElementById("view").addEventListener("click", async e => {
   else if (d.anapar) {
     const [fid, pid, v] = d.anapar.split("|"), it = S.fridges.find(f => f.id === fid)?.items[pid], par = +v; if (!it) return;
     b.disabled = true; it.par = par; it.cur = Math.min(it.cur, par);
-    const { error } = await sb.from("fridge_items").update({ par, current: it.cur }).eq("fridge_id", fid).eq("product_id", pid);
+    const { error } = await tbl("fridge_items").update({ par, current: it.cur }).eq("fridge_id", fid).eq("product_id", pid);
     if (error) { showToast("Opslaan mislukt: " + error.message); b.disabled = false; return; }
     const row = (anaSpace?.items || []).find(x => x.f === fid && x.id === pid); if (row) row.par = par;
     showToast(`${pname(pid)}: vol is nu ${par}`); render();
